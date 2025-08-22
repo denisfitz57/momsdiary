@@ -1,0 +1,252 @@
+import React, { useState, useCallback, useEffect } from 'react';
+import type { DiaryPage, SearchResult } from './types';
+import { SearchBar } from './components/SearchBar';
+import { PageView } from './components/PageView';
+import { Pagination } from './components/Pagination';
+import { SearchResults } from './components/SearchResults';
+import { R2_PUBLIC_URL, DIARY_ENTRIES } from './data/diaryData';
+
+const App: React.FC = () => {
+  const [diaryPages, setDiaryPages] = useState<DiaryPage[]>([]);
+  const [currentPageIndex, setCurrentPageIndex] = useState<number>(0);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState<string>('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [searchIndexProgress, setSearchIndexProgress] = useState<string | null>(null);
+  const [error, setError] = useState<string>('');
+
+  useEffect(() => {
+    if (!R2_PUBLIC_URL || R2_PUBLIC_URL.includes('your-public-bucket-url')) {
+      setError('Configuration needed: Please update the R2_PUBLIC_URL in `data/diaryData.ts` with your public Cloudflare R2 bucket URL.');
+      setIsLoading(false);
+      return;
+    }
+    
+    if (DIARY_ENTRIES.length === 0) {
+      setError('Configuration needed: Please add your diary entry filenames to the `DIARY_ENTRIES` array in `data/diaryData.ts`.');
+      setIsLoading(false);
+      return;
+    }
+
+    // Create a scaffold of pages without markdown content for instant loading
+    const scaffoldedPages: DiaryPage[] = DIARY_ENTRIES.map((baseName, index) => ({
+      id: index + 1,
+      year: baseName.substring(0, 4), // Extract year from filename
+      imageUrl: `${R2_PUBLIC_URL}/${baseName}.jpg`,
+      markdownContent: null, // Content will be lazy-loaded
+    }));
+
+    setDiaryPages(scaffoldedPages);
+    setIsLoading(false);
+  }, []);
+
+  // On-demand loading for the currently viewed page
+  useEffect(() => {
+    const loadCurrentPageContent = async () => {
+      if (diaryPages.length > 0) {
+        const currentPage = diaryPages[currentPageIndex];
+        if (currentPage && currentPage.markdownContent === null) {
+          try {
+            const mdUrl = `${R2_PUBLIC_URL}/${DIARY_ENTRIES[currentPageIndex]}.md`;
+            const response = await fetch(mdUrl);
+            if (!response.ok) throw new Error(`Failed to fetch page ${currentPageIndex + 1}: ${response.statusText}`);
+            const markdownContent = await response.text();
+            
+            setDiaryPages(prevPages => {
+              const newPages = [...prevPages];
+              newPages[currentPageIndex] = { ...currentPage, markdownContent };
+              return newPages;
+            });
+          } catch (err) {
+            console.error(err);
+            setError(`Could not load content for page ${currentPageIndex + 1}.`);
+          }
+        }
+      }
+    };
+    
+    loadCurrentPageContent();
+  }, [currentPageIndex, diaryPages]);
+
+  const handleNextPage = () => {
+    setCurrentPageIndex((prevIndex) => Math.min(prevIndex + 1, diaryPages.length - 1));
+  };
+
+  const handlePrevPage = () => {
+    setCurrentPageIndex((prevIndex) => Math.max(prevIndex - 1, 0));
+  };
+  
+  const handleJumpToPage = (pageIndex: number) => {
+    if (pageIndex >= 0 && pageIndex < diaryPages.length) {
+      setCurrentPageIndex(pageIndex);
+       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleSearch = useCallback(async () => {
+    if (!searchTerm.trim()) {
+      clearSearch();
+      return;
+    }
+
+    const pagesToFetch = diaryPages
+      .map((p, index) => ({ page: p, index }))
+      .filter(({ page }) => page.markdownContent === null);
+
+    if (pagesToFetch.length > 0) {
+      setIsSearching(true);
+      setError('');
+      try {
+        const updatedPages = [...diaryPages];
+        let fetchedCount = 0;
+        const totalToFetch = pagesToFetch.length;
+        const alreadyFetchedCount = diaryPages.length - totalToFetch;
+
+        for (const { page, index } of pagesToFetch) {
+          fetchedCount++;
+          // Update progress UI periodically to avoid excessive re-renders
+          if (fetchedCount % 5 === 0 || fetchedCount === totalToFetch) {
+             setSearchIndexProgress(`Indexing ${alreadyFetchedCount + fetchedCount} of ${diaryPages.length}...`);
+          }
+          
+          const mdUrl = `${R2_PUBLIC_URL}/${DIARY_ENTRIES[index]}.md`;
+          const response = await fetch(mdUrl);
+          if (!response.ok) throw new Error(`Fetch failed for ${mdUrl}`);
+          const markdownContent = await response.text();
+          updatedPages[index] = { ...page, markdownContent };
+        }
+        setDiaryPages(updatedPages); // Set all pages at once at the end
+      } catch (err) {
+        console.error('Error building search index:', err);
+        setError('Failed to load all diary content for searching.');
+        setIsSearching(false);
+        setSearchIndexProgress(null);
+        return;
+      } finally {
+        setSearchIndexProgress(null);
+      }
+    }
+    setActiveSearchTerm(searchTerm);
+  }, [searchTerm, diaryPages]);
+  
+  // Effect to run search logic after data is confirmed to be ready
+  useEffect(() => {
+    if (!activeSearchTerm) {
+      return;
+    }
+    const isDataReady = diaryPages.every(p => p.markdownContent !== null);
+    if (!isDataReady) {
+      return; // Wait for fetching to complete
+    }
+
+    const lowercasedTerm = activeSearchTerm.toLowerCase();
+    const results: SearchResult[] = [];
+
+    diaryPages.forEach((page, index) => {
+      const content = page.markdownContent!.toLowerCase(); // Non-null assertion is safe here
+      if (content.includes(lowercasedTerm)) {
+        const firstIndex = content.indexOf(lowercasedTerm);
+        const start = Math.max(0, firstIndex - 50);
+        const end = Math.min(content.length, firstIndex + lowercasedTerm.length + 50);
+        const snippet = page.markdownContent!.substring(start, end);
+        
+        results.push({
+          pageIndex: index,
+          snippet: snippet,
+        });
+      }
+    });
+    setSearchResults(results);
+    setIsSearching(false); // Search is complete
+  }, [activeSearchTerm, diaryPages]);
+
+
+  const clearSearch = () => {
+    setSearchTerm('');
+    setActiveSearchTerm('');
+    setSearchResults([]);
+  };
+
+  const currentPageData: DiaryPage | null = diaryPages[currentPageIndex] || null;
+  const currentYear = currentPageData ? currentPageData.year : null;
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-4 sm:p-6">
+      <header className="w-full max-w-7xl mb-6">
+        <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+            <div className="flex items-center gap-4">
+                 <h1 className="text-2xl font-bold text-white tracking-wider">
+                    Digital Diary Viewer
+                 </h1>
+                 {currentYear && (
+                    <span className="text-xl font-semibold text-gray-400 border-l-2 border-gray-600 pl-4">
+                        {currentYear}
+                    </span>
+                 )}
+            </div>
+          <div className="w-full sm:w-auto sm:min-w-[300px]">
+            <SearchBar 
+              searchTerm={searchTerm}
+              onSearchTermChange={setSearchTerm}
+              onSearch={handleSearch}
+              isSearching={isSearching}
+              searchProgressText={searchIndexProgress}
+            />
+          </div>
+        </div>
+         {error && (
+            <div className="w-full max-w-7xl mt-4 p-3 bg-red-800/50 border border-red-700 text-red-200 rounded-lg text-center">
+                {error}
+            </div>
+        )}
+      </header>
+
+      {searchResults.length > 0 && (
+         <SearchResults
+          results={searchResults}
+          searchTerm={activeSearchTerm}
+          onResultClick={handleJumpToPage}
+          onClear={clearSearch}
+        />
+      )}
+
+      <main className="w-full max-w-7xl flex-grow flex flex-col mt-4">
+        {isLoading ? (
+            <div className="flex-grow flex flex-col items-center justify-center text-gray-500 bg-gray-800 rounded-lg p-8">
+                <h2 className="text-2xl font-semibold mb-4 text-gray-300">Initializing Diary...</h2>
+            </div>
+        ) : diaryPages.length > 0 && currentPageData ? (
+          <>
+            <PageView page={currentPageData} />
+            <Pagination
+              currentPage={currentPageIndex}
+              totalPages={diaryPages.length}
+              onNext={handleNextPage}
+              onPrev={handlePrevPage}
+            />
+          </>
+        ) : (
+          <div className="flex-grow flex flex-col items-center justify-center text-gray-500 bg-gray-800 rounded-lg p-8">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-300">Welcome to your Digital Diary</h2>
+            <p className="text-center max-w-md">
+              { !error && 'Could not load diary entries. Please ensure your configuration in `data/diaryData.ts` is correct.' }
+            </p>
+             {error && (
+                <p className="text-center max-w-lg mt-4 text-red-300 bg-red-900/50 p-3 rounded-md">
+                    {error}
+                </p>
+            )}
+          </div>
+        )}
+      </main>
+
+      <footer className="w-full max-w-7xl mt-6 text-center text-xs text-gray-500">
+        <p>A simple interface for exploring scanned documents.</p>
+      </footer>
+    </div>
+  );
+};
+
+export default App;

@@ -1,0 +1,11 @@
+
+export interface DiaryPage {
+  id: number;
+  imageUrl: string;
+  markdownContent: string | null;
+}
+
+export interface SearchResult {
+  pageIndex: number;
+  snippet: string;
+}

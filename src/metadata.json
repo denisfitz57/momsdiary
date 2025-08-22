@@ -1,0 +1,5 @@
+{
+  "name": "Digital Diary Viewer",
+  "description": "An application to view scanned diary pages (JPGs) side-by-side with their transcribed text (.md files). It supports pagination and full-text search to easily navigate through entries.",
+  "requestFramePermissions": []
+}
