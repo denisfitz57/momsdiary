@@ -48,7 +48,7 @@ export const SearchResults: React.FC<SearchResultsProps> = ({ results, searchTer
           Clear Results
         </button>
       </div>
-      <ul className="space-y-3 max-h-64 overflow-y-auto pr-2">
+      <ul className="space-y-3 max-h-32 overflow-y-auto pr-2">
         {results.map((result, index) => (
           <li
             key={index}
