@@ -102,8 +102,11 @@ const App: React.FC = () => {
       <header className="w-full max-w-7xl mb-6">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
             <div className="flex items-center gap-4">
-                 <h1 className="text-2xl font-bold text-white tracking-wider">
-                    Digital Diary Viewer
+                 <h1 className="text-2xl font-bold text-white tracking-wider flex items-baseline">
+                    <span>Digital Diary Viewer</span>
+                    {currentPageData && (
+                        <span className="text-xl text-gray-400 font-medium ml-3">- {currentPageData.year.substring(0, 4)}</span>
+                    )}
                  </h1>
             </div>
           <div className="w-full sm:w-auto sm:min-w-[300px]">
