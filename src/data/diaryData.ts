@@ -918,3 +918,7 @@ export const DIARY_ENTRIES = [
 '2013c_00122',
 '2013c_00123'
 ];
+
+// 5. OPTIONAL: For instant search, run the content build script.
+//    See `src/data/diaryContent.ts` for instructions on how to generate
+//    a bundled content file. This will make your diary searchable instantly.

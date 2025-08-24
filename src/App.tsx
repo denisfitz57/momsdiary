@@ -1,10 +1,11 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { DiaryPage, SearchResult } from './types';
 import { SearchBar } from './components/SearchBar';
 import { PageView } from './components/PageView';
 import { Pagination } from './components/Pagination';
 import { SearchResults } from './components/SearchResults';
 import { R2_PUBLIC_URL, DIARY_ENTRIES } from './data/diaryData';
+import { DIARY_CONTENT } from './data/diaryContent';
 
 const App: React.FC = () => {
   const [diaryPages, setDiaryPages] = useState<DiaryPage[]>([]);
@@ -14,7 +15,6 @@ const App: React.FC = () => {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [searchIndexProgress, setSearchIndexProgress] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
 
   useEffect(() => {
@@ -30,45 +30,17 @@ const App: React.FC = () => {
       return;
     }
 
-    // Create a scaffold of pages without markdown content for instant loading
-    const scaffoldedPages: DiaryPage[] = DIARY_ENTRIES.map((baseName, index) => ({
+    // Immediately create all pages with content from the local bundle
+    const allPages: DiaryPage[] = DIARY_ENTRIES.map((baseName, index) => ({
       id: index + 1,
-      year: baseName.substring(0, 4), // Extract year from filename
+      year: baseName.split('_')[0],
       imageUrl: `${R2_PUBLIC_URL}/${baseName}.jpg`,
-      markdownContent: null, // Content will be lazy-loaded
+      markdownContent: DIARY_CONTENT[baseName] ?? `*Content for ${baseName} is not in the local bundle. Please run the content generation script.*`,
     }));
 
-    setDiaryPages(scaffoldedPages);
+    setDiaryPages(allPages);
     setIsLoading(false);
   }, []);
-
-  // On-demand loading for the currently viewed page
-  useEffect(() => {
-    const loadCurrentPageContent = async () => {
-      if (diaryPages.length > 0) {
-        const currentPage = diaryPages[currentPageIndex];
-        if (currentPage && currentPage.markdownContent === null) {
-          try {
-            const mdUrl = `${R2_PUBLIC_URL}/${DIARY_ENTRIES[currentPageIndex]}.md`;
-            const response = await fetch(mdUrl);
-            if (!response.ok) throw new Error(`Failed to fetch page ${currentPageIndex + 1}: ${response.statusText}`);
-            const markdownContent = await response.text();
-            
-            setDiaryPages(prevPages => {
-              const newPages = [...prevPages];
-              newPages[currentPageIndex] = { ...currentPage, markdownContent };
-              return newPages;
-            });
-          } catch (err) {
-            console.error(err);
-            setError(`Could not load content for page ${currentPageIndex + 1}.`);
-          }
-        }
-      }
-    };
-    
-    loadCurrentPageContent();
-  }, [currentPageIndex, diaryPages]);
 
   const handleNextPage = () => {
     setCurrentPageIndex((prevIndex) => Math.min(prevIndex + 1, diaryPages.length - 1));
@@ -85,69 +57,22 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSearch = useCallback(async () => {
+  const handleSearch = () => {
     if (!searchTerm.trim()) {
       clearSearch();
       return;
     }
-
-    const pagesToFetch = diaryPages
-      .map((p, index) => ({ page: p, index }))
-      .filter(({ page }) => page.markdownContent === null);
-
-    if (pagesToFetch.length > 0) {
-      setIsSearching(true);
-      setError('');
-      try {
-        const updatedPages = [...diaryPages];
-        let fetchedCount = 0;
-        const totalToFetch = pagesToFetch.length;
-        const alreadyFetchedCount = diaryPages.length - totalToFetch;
-
-        for (const { page, index } of pagesToFetch) {
-          fetchedCount++;
-          // Update progress UI periodically to avoid excessive re-renders
-          if (fetchedCount % 5 === 0 || fetchedCount === totalToFetch) {
-             setSearchIndexProgress(`Indexing ${alreadyFetchedCount + fetchedCount} of ${diaryPages.length}...`);
-          }
-          
-          const mdUrl = `${R2_PUBLIC_URL}/${DIARY_ENTRIES[index]}.md`;
-          const response = await fetch(mdUrl);
-          if (!response.ok) throw new Error(`Fetch failed for ${mdUrl}`);
-          const markdownContent = await response.text();
-          updatedPages[index] = { ...page, markdownContent };
-        }
-        setDiaryPages(updatedPages); // Set all pages at once at the end
-      } catch (err) {
-        console.error('Error building search index:', err);
-        setError('Failed to load all diary content for searching.');
-        setIsSearching(false);
-        setSearchIndexProgress(null);
-        return;
-      } finally {
-        setSearchIndexProgress(null);
-      }
-    }
-    setActiveSearchTerm(searchTerm);
-  }, [searchTerm, diaryPages]);
-  
-  // Effect to run search logic after data is confirmed to be ready
-  useEffect(() => {
-    if (!activeSearchTerm) {
-      return;
-    }
-    const isDataReady = diaryPages.every(p => p.markdownContent !== null);
-    if (!isDataReady) {
-      return; // Wait for fetching to complete
-    }
-
-    const lowercasedTerm = activeSearchTerm.toLowerCase();
+    
+    setIsSearching(true);
+    
+    const lowercasedTerm = searchTerm.toLowerCase();
     const results: SearchResult[] = [];
 
     diaryPages.forEach((page, index) => {
-      const content = page.markdownContent!.toLowerCase(); // Non-null assertion is safe here
-      if (content.includes(lowercasedTerm)) {
+      const content = page.markdownContent?.toLowerCase();
+      if (content && content.includes(lowercasedTerm)) {
         const firstIndex = content.indexOf(lowercasedTerm);
+        // Create a snippet around the search term
         const start = Math.max(0, firstIndex - 50);
         const end = Math.min(content.length, firstIndex + lowercasedTerm.length + 50);
         const snippet = page.markdownContent!.substring(start, end);
@@ -158,10 +83,11 @@ const App: React.FC = () => {
         });
       }
     });
-    setSearchResults(results);
-    setIsSearching(false); // Search is complete
-  }, [activeSearchTerm, diaryPages]);
 
+    setSearchResults(results);
+    setActiveSearchTerm(searchTerm);
+    setIsSearching(false);
+  };
 
   const clearSearch = () => {
     setSearchTerm('');
@@ -170,7 +96,6 @@ const App: React.FC = () => {
   };
 
   const currentPageData: DiaryPage | null = diaryPages[currentPageIndex] || null;
-  const currentYear = currentPageData ? currentPageData.year : null;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-4 sm:p-6">
@@ -180,11 +105,6 @@ const App: React.FC = () => {
                  <h1 className="text-2xl font-bold text-white tracking-wider">
                     Digital Diary Viewer
                  </h1>
-                 {currentYear && (
-                    <span className="text-xl font-semibold text-gray-400 border-l-2 border-gray-600 pl-4">
-                        {currentYear}
-                    </span>
-                 )}
             </div>
           <div className="w-full sm:w-auto sm:min-w-[300px]">
             <SearchBar 
@@ -192,7 +112,6 @@ const App: React.FC = () => {
               onSearchTermChange={setSearchTerm}
               onSearch={handleSearch}
               isSearching={isSearching}
-              searchProgressText={searchIndexProgress}
             />
           </div>
         </div>
